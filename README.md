@@ -1,15 +1,22 @@
-# structured-options-pricer
+# Structured Options Pricer
 
-An educational options pricing project built with Python and Streamlit.
+Application pédagogique de pricing d'options et de produits structures, developpee avec Python et Streamlit.
 
-It includes:
-- Black-Scholes pricing for European call and put options
+## Fonctionnalites principales
+
+- Pricing Black-Scholes des options europeennes (call/put)
 - Greeks (delta, gamma, vega, theta, rho)
-- Monte Carlo pricing for European call and put options
-- Volatility strategies: long straddle and long strangle
-- Basic pytest tests
+- Pricing Monte Carlo pour options europeennes
+- Strategies de volatilite (long straddle, long strangle)
+- Module de structuration (budget optionnel, decomposition et resume)
+- Module "Market Vanilla Options" avec:
+  - mode `live` (donnees de marche via Yahoo Finance)
+  - mode `synthetic` (surface implicite realiste, plus stable en demo)
+  - nettoyage robuste des chaines d'options
+  - ATM IV robuste
+  - controles de qualite (liquidite, monotonicite, convexite)
 
-## Project Structure
+## Structure du projet
 
 ```text
 structured-options-pricer/
@@ -17,41 +24,52 @@ structured-options-pricer/
   requirements.txt
   README.md
   core/
-    black_scholes.py
-    monte_carlo.py
-  risk/
-    greeks.py
+  data/
   instruments/
-    volatility_strategies.py
+  risk/
   tests/
-    test_black_scholes.py
-    test_monte_carlo.py
-    test_strategies.py
 ```
 
-## Quick Start
+## Installation rapide
 
-1. Create and activate a virtual environment.
-2. Install dependencies:
+1. Creer et activer un environnement virtuel
+2. Installer les dependances:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Run the Streamlit app:
+3. Lancer l'application Streamlit:
 
 ```bash
 streamlit run app.py
 ```
 
-4. Run tests:
+4. Lancer les tests:
 
 ```bash
 pytest -q
 ```
 
-## Notes
+## Utilisation du module Market Vanilla Options
 
-- Inputs assume annualized volatility and time in years.
-- Greeks are Black-Scholes closed-form Greeks for European options.
-- Monte Carlo uses a one-step terminal simulation under geometric Brownian motion.
+- Le `Data Mode` est **par defaut sur `synthetic`** pour eviter les erreurs de quota Yahoo en demonstration.
+- Le mode `live` reste disponible pour recuperer des quotes de marche reelles.
+- Si Yahoo limite les requetes (`Too Many Requests`), basculer temporairement en `synthetic` puis reessayer en `live`.
+
+## Deploiement Streamlit Cloud
+
+L'application deployee suit la branche `main` du repo GitHub:
+
+- [https://github.com/mariuscarre/structured-options-pricer](https://github.com/mariuscarre/structured-options-pricer)
+
+Apres un push:
+- faire un **Reboot app** dans Streamlit Cloud
+- puis un refresh navigateur (`Ctrl+F5`)
+
+## Notes techniques
+
+- Les volatilites sont annualisees.
+- Le temps est exprime en annees dans les modeles.
+- Les Greeks sont calcules en formule fermee Black-Scholes.
+- Le module Monte Carlo repose sur une dynamique GBM (geometric Brownian motion).
