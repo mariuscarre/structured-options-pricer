@@ -1,12 +1,12 @@
 # Structured Options Pricer
 
-Application pédagogique de pricing d'options et de produits structures, developpee avec Python et Streamlit.
+Application pédagogique de pricing d'options et de produits structures developpee avec Python et Streamlit via cursor
 
 ## Fonctionnalites principales
 
 - Section **Market News**: actualites de marche
 - Section **Simple Pricer**: pricing et sensibilites (Black-Scholes, Monte Carlo, Greeks, strategies)
-- Section **Market Vanilla Options**: analyse de chaine d'options (mode `synthetic` & live , Skew, PnL)
+- Section **Market Vanilla Options**: analyse de chaine d'options (mode synthetic & live , Skew, PnL)
 - Section **Barrier Products**: pricer produits barrieres
 - Section **Structured Products Lab**: Structuration de produits structurés (Athena, Phoenix)
 
