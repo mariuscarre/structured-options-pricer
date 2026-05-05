@@ -4,12 +4,12 @@ Application pédagogique de pricing d'options et de produits structures, develop
 
 ## Fonctionnalites principales
 
-- Pricing Black-Scholes des options europeennes (call/put)
-- Greeks (delta, gamma, vega, theta, rho)
-- Pricing Monte Carlo pour options europeennes
-- Strategies de volatilite (long straddle, long strangle)
-- Module de structuration (budget optionnel, decomposition et resume)
-- Module "Market Vanilla Options" (mode `synthetic` par defaut, mode `live` disponible)
+- Section **Black-Scholes**: pricing des options europeennes (call/put)
+- Section **Greeks**: delta, gamma, vega, theta, rho
+- Section **Monte Carlo**: pricing stochastique des options europeennes
+- Section **Strategies de volatilite**: long straddle, long strangle
+- Section **Structuring Summary**: budget optionnel, decomposition et resume
+- Section **Market Vanilla Options**: mode `synthetic` par defaut, mode `live` disponible
 
 ## Structure du projet
 
