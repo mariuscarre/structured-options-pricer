@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import feedparser
 import requests
+import yfinance as yf
 
 
 @dataclass
@@ -17,6 +18,17 @@ class NewsArticle:
     link: str
     published: str
     summary: str
+
+
+@dataclass
+class IndexQuote:
+    """Snapshot for a major equity index."""
+
+    name: str
+    symbol: str
+    last: float
+    change: float
+    change_pct: float
 
 
 def _parse_feed_articles(feed_text: str, source: str, limit: int) -> list[NewsArticle]:
@@ -70,3 +82,62 @@ def fetch_general_market_news(limit: int = 8) -> list[NewsArticle]:
             break
 
     return unique_articles
+
+
+def _safe_float(value: object) -> float | None:
+    """Best-effort float conversion."""
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    if out != out:  # NaN guard
+        return None
+    return out
+
+
+def _fetch_index_quote(symbol: str, name: str) -> IndexQuote | None:
+    """Fetch one index quote from Yahoo with resilient fallbacks."""
+    try:
+        ticker = yf.Ticker(symbol)
+
+        last = _safe_float(ticker.fast_info.get("lastPrice"))
+        prev_close = _safe_float(ticker.fast_info.get("previousClose"))
+
+        if last is None or prev_close is None or prev_close <= 0:
+            hist = ticker.history(period="5d", interval="1d", auto_adjust=False)
+            if hist is None or hist.empty:
+                return None
+            close_series = hist["Close"].dropna()
+            if len(close_series) == 0:
+                return None
+            last = float(close_series.iloc[-1])
+            prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else last
+            if prev_close <= 0:
+                return None
+
+        change = last - prev_close
+        change_pct = (change / prev_close) * 100.0
+        return IndexQuote(name=name, symbol=symbol, last=last, change=change, change_pct=change_pct)
+    except Exception:
+        return None
+
+
+def fetch_major_indices() -> list[IndexQuote]:
+    """Fetch key global equity index snapshots."""
+    index_map = [
+        ("S&P 500", "^GSPC"),
+        ("Nasdaq 100", "^NDX"),
+        ("Dow Jones", "^DJI"),
+        ("Euro Stoxx 50", "^STOXX50E"),
+        ("CAC 40", "^FCHI"),
+        ("DAX", "^GDAXI"),
+        ("FTSE 100", "^FTSE"),
+        ("Nikkei 225", "^N225"),
+        ("Hang Seng", "^HSI"),
+    ]
+    quotes: list[IndexQuote] = []
+    for name, symbol in index_map:
+        quote = _fetch_index_quote(symbol=symbol, name=name)
+        if quote is not None:
+            quotes.append(quote)
+    return quotes

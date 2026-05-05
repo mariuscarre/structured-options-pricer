@@ -33,7 +33,7 @@ from core.black_scholes import call_price, put_price
 from core.hedging import hedge_quantity, option_delta, simulate_delta_hedge_pnl
 from core.monte_carlo import european_option_monte_carlo
 from data.market_data import fetch_historical_volatility, fetch_market_option_data, fetch_synthetic_option_data
-from data.news import fetch_general_market_news
+from data.news import fetch_general_market_news, fetch_major_indices
 from instruments.volatility_strategies import straddle_price, strangle_price
 from risk.greeks import call_delta, call_rho, call_theta, gamma, put_delta, put_rho, put_theta, vega
 
@@ -48,6 +48,12 @@ def _get_market_option_data_cached(ticker: str, expiration: str, option_type: st
 def _get_news_cached(limit: int = 8):
     """Cached market news fetch (10 minutes TTL)."""
     return fetch_general_market_news(limit=limit)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _get_major_indices_cached():
+    """Cached major indices fetch (2 minutes TTL)."""
+    return fetch_major_indices()
 
 
 def _time_to_expiry_years(expiration: str) -> float:
@@ -635,15 +641,30 @@ def render_market_news() -> None:
     with refresh_col:
         if st.button("🔄 Refresh News", use_container_width=True):
             _get_news_cached.clear()
+            _get_major_indices_cached.clear()
             st.success("News cache cleared.")
 
     st.caption("Cache TTL: 10 minutes")
 
     try:
+        indices = _get_major_indices_cached()
         articles = _get_news_cached(limit=8)
     except RuntimeError as exc:
         st.error(f"Unable to fetch market news right now. Details: {exc}")
         return
+
+    if indices:
+        st.markdown("### Major Indices")
+        idx_cols = st.columns(3)
+        for i, quote in enumerate(indices):
+            col = idx_cols[i % 3]
+            col.metric(
+                label=quote.name,
+                value=f"{quote.last:,.2f}",
+                delta=f"{quote.change:+.2f} ({quote.change_pct:+.2f}%)",
+            )
+        st.caption("Indicative Yahoo Finance snapshots (auto-refresh via cache).")
+        st.markdown("---")
 
     if not articles:
         st.warning("⚠️ No recent general market news available at the moment.")
