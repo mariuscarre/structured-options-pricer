@@ -32,7 +32,7 @@ from core.structuring_budget import (
 from core.black_scholes import call_price, put_price
 from core.hedging import hedge_quantity, option_delta, simulate_delta_hedge_pnl
 from core.monte_carlo import european_option_monte_carlo
-from data.market_data import fetch_historical_volatility, fetch_market_option_data
+from data.market_data import fetch_historical_volatility, fetch_market_option_data, fetch_synthetic_option_data
 from data.news import fetch_general_market_news
 from instruments.volatility_strategies import straddle_price, strangle_price
 from risk.greeks import call_delta, call_rho, call_theta, gamma, put_delta, put_rho, put_theta, vega
@@ -63,12 +63,14 @@ def _clean_option_chain(option_chain: pd.DataFrame, spot: float) -> pd.DataFrame
     """Filter and enrich option chain for analytics."""
     chain = option_chain.copy()
     chain = chain[(chain["strike"] >= 0.7 * spot) & (chain["strike"] <= 1.3 * spot)]
-    chain = chain[~((chain["bid"] <= 0) & (chain["ask"] <= 0))]
+    # For some expiries (especially very short-dated), Yahoo can have bid/ask at zero while lastPrice is populated.
+    chain = chain[~((chain["bid"] <= 0) & (chain["ask"] <= 0) & (chain["lastPrice"] <= 0))]
     chain = chain[chain["impliedVolatility"].notna() & (chain["impliedVolatility"] > 0)]
-    chain = chain[~((chain["volume"] <= 0) & (chain["openInterest"] <= 0))]
+    # Keep zero-volume strikes too: on some names/expiries they are still usable for smile diagnostics.
     chain = chain.sort_values("strike").reset_index(drop=True)
 
-    chain["mid_price"] = (chain["bid"] + chain["ask"]) / 2.0
+    mid_ba = (chain["bid"] + chain["ask"]) / 2.0
+    chain["mid_price"] = np.where(mid_ba > 0, mid_ba, chain["lastPrice"])
     chain["spread_dollar"] = (chain["ask"] - chain["bid"]).clip(lower=0.0)
     chain["spread_pct"] = np.where(chain["mid_price"] > 0, (chain["spread_dollar"] / chain["mid_price"]) * 100.0, np.nan)
     chain["iv_pct"] = chain["impliedVolatility"] * 100.0
@@ -90,13 +92,35 @@ def _quality_metrics(raw_chain: pd.DataFrame, clean_chain: pd.DataFrame, option_
             "convexity_breaches": 0,
         }
 
-    prices = clean_chain["mid_price"].to_numpy(dtype=float)
-    first_diff = np.diff(prices)
-    if option_type == "call":
-        monotonicity_breaches = int(np.sum(first_diff > 1e-8))
-    else:
-        monotonicity_breaches = int(np.sum(first_diff < -1e-8))
-    convexity_breaches = int(np.sum(np.diff(prices, n=2) < -1e-8)) if len(prices) >= 3 else 0
+    # Use strike-aware finite differences (strikes are not uniformly spaced).
+    q = clean_chain.sort_values("strike")[["strike", "mid_price"]].dropna()
+    q = q[(q["strike"] > 0) & (q["mid_price"] >= 0)]
+    q = q.drop_duplicates(subset=["strike"], keep="first")
+    strikes = q["strike"].to_numpy(dtype=float)
+    prices = q["mid_price"].to_numpy(dtype=float)
+
+    monotonicity_breaches = 0
+    convexity_breaches = 0
+    if len(prices) >= 2:
+        # Relative tolerance avoids flagging tiny numerical / micro-quote noise as arbitrage.
+        mono_tol = 1e-4 * float(np.nanmedian(np.maximum(prices, 1e-8)))
+        first_diff = np.diff(prices)
+        if option_type == "call":
+            # Calls should be non-increasing with strike.
+            monotonicity_breaches = int(np.sum(first_diff > mono_tol))
+        else:
+            # Puts should be non-decreasing with strike.
+            monotonicity_breaches = int(np.sum(first_diff < -mono_tol))
+
+    if len(prices) >= 3:
+        # Butterfly convexity check with uneven strike spacing:
+        # slope_i = dC/dK or dP/dK on segment i; convexity means slopes are non-decreasing in K.
+        dk = np.diff(strikes)
+        valid = dk > 1e-12
+        slopes = np.diff(prices)[valid] / dk[valid]
+        if len(slopes) >= 2:
+            conv_tol = 1e-6
+            convexity_breaches = int(np.sum(np.diff(slopes) < -conv_tol))
 
     return {
         "raw_strikes": int(len(raw_chain)),
@@ -325,6 +349,7 @@ def render_market_vanilla_options() -> None:
     )
 
     st.sidebar.header("Market Vanilla Settings")
+    data_mode = st.sidebar.selectbox("Data Mode", options=["live", "synthetic"], index=0)
     ticker = st.sidebar.selectbox("Company / Ticker", options=["AAPL", "MSFT", "TSLA", "NVDA", "AMZN", "GOOGL"])
     option_type = st.sidebar.selectbox("Option Type", options=["call", "put"], index=0)
     rate = st.sidebar.number_input("Risk-Free Rate (r)", min_value=0.0, value=0.045, step=0.005, format="%.4f")
@@ -339,15 +364,22 @@ def render_market_vanilla_options() -> None:
         st.sidebar.success("Market data cache cleared.")
 
     try:
-        initial_data = _get_market_option_data_cached(ticker=ticker, expiration="", option_type=option_type)
+        if data_mode == "synthetic":
+            initial_data = fetch_synthetic_option_data(ticker=ticker, expiration="", option_type=option_type, rate=rate)
+        else:
+            initial_data = _get_market_option_data_cached(ticker=ticker, expiration="", option_type=option_type)
     except RuntimeError as exc:
         st.error(f"Unable to load market data. Please retry later. Details: {exc}")
         return
     expiration = st.sidebar.selectbox("Expiration", options=initial_data.expirations, index=0)
 
     try:
-        data = _get_market_option_data_cached(ticker=ticker, expiration=expiration, option_type=option_type)
-        hv20 = fetch_historical_volatility(ticker=ticker, window=20)
+        if data_mode == "synthetic":
+            data = fetch_synthetic_option_data(ticker=ticker, expiration=expiration, option_type=option_type, rate=rate)
+            hv20 = max(0.05, 0.85 * data.atm_iv)
+        else:
+            data = _get_market_option_data_cached(ticker=ticker, expiration=expiration, option_type=option_type)
+            hv20 = fetch_historical_volatility(ticker=ticker, window=20)
     except RuntimeError as exc:
         st.error(f"Unable to load market analytics. Details: {exc}")
         return
@@ -362,6 +394,28 @@ def render_market_vanilla_options() -> None:
 
     raw_chain = data.option_chain.copy()
     clean_chain = _clean_option_chain(raw_chain, spot=spot)
+    auto_expiry_note = None
+    if data_mode == "live" and clean_chain.empty and len(initial_data.expirations) > 1:
+        for alt_exp in initial_data.expirations:
+            if alt_exp == data.expiration:
+                continue
+            try:
+                alt_data = _get_market_option_data_cached(ticker=ticker, expiration=alt_exp, option_type=option_type)
+            except RuntimeError:
+                continue
+            alt_chain = _clean_option_chain(alt_data.option_chain.copy(), spot=alt_data.spot_price)
+            if not alt_chain.empty:
+                data = alt_data
+                spot = data.spot_price
+                strike = data.atm_strike
+                volatility = max(data.atm_iv, 0.0001)
+                time_to_expiry = _time_to_expiry_years(data.expiration)
+                days_to_expiry = max(int(round(time_to_expiry * 365)), 1)
+                iv_hv_spread = volatility - hv20
+                raw_chain = data.option_chain.copy()
+                clean_chain = alt_chain
+                auto_expiry_note = f"Selected expiry had no usable quotes. Switched to nearest liquid expiry: {data.expiration}."
+                break
     quality = _quality_metrics(raw_chain, clean_chain, option_type=option_type)
 
     bs_price = call_price(spot, strike, rate, volatility, time_to_expiry) if option_type == "call" else put_price(
@@ -399,15 +453,22 @@ def render_market_vanilla_options() -> None:
             '<div class="market-section-subtitle">Live snapshot for selected ticker and expiry</div>',
             unsafe_allow_html=True,
         )
-        cols = st.columns(8)
-        cols[0].metric("Expiration", data.expiration)
-        cols[1].metric("Spot", f"{spot:.2f}")
-        cols[2].metric("ATM Strike", f"{strike:.2f}")
-        cols[3].metric("Days to Expiry", f"{days_to_expiry}")
-        cols[4].metric("Risk-Free Rate", f"{rate:.2%}")
-        cols[5].metric("ATM IV", f"{volatility:.2%}")
-        cols[6].metric("HV (20d)", f"{hv20:.2%}")
-        cols[7].metric("IV - HV", f"{iv_hv_spread:.2%}")
+        if auto_expiry_note:
+            st.info(auto_expiry_note)
+        if data_mode == "synthetic":
+            st.info("Synthetic mode: generated option chain and robust implied volatility surface.")
+        h1 = st.columns(4)
+        h1[0].metric("Expiration", data.expiration)
+        h1[1].metric("Days to Expiry", f"{days_to_expiry:d}")
+        h1[2].metric("Spot", f"{spot:,.2f}")
+        h1[3].metric("ATM Strike", f"{strike:,.2f}")
+        h2 = st.columns(4)
+        h2[0].metric("Risk-Free Rate", f"{rate:.2%}")
+        h2[1].metric("ATM IV", f"{volatility:.2%}")
+        h2[2].metric("HV (20d)", f"{hv20:.2%}")
+        h2[3].metric("IV - HV", f"{iv_hv_spread:+.2%}")
+        mode_tag = "synthetic" if data_mode == "synthetic" else "live"
+        st.caption(f"Quote timestamp: {fetch_timestamp} ({mode_tag})")
 
     st.markdown("")
     st.markdown("---")
@@ -419,17 +480,16 @@ def render_market_vanilla_options() -> None:
             '<div class="market-section-subtitle">Liquidity and no-arbitrage diagnostics on cleaned chain</div>',
             unsafe_allow_html=True,
         )
-        qcols = st.columns(7)
-        qcols[0].metric("Raw Strikes", f"{quality['raw_strikes']}")
-        qcols[1].metric("Filtered Strikes", f"{quality['filtered_strikes']}")
+        qcols = st.columns(4)
+        qcols[0].metric("Raw Strikes", f"{quality['raw_strikes']:,d}")
+        qcols[1].metric("Filtered Strikes", f"{quality['filtered_strikes']:,d}")
         qcols[2].metric("Retention", f"{quality['retention_pct']:.1f}%")
         qcols[3].metric("Median Spread", f"{quality['median_spread_dollar']:.3f} $ / {quality['median_spread_pct']:.2f}%")
-        qcols[4].metric("Total Volume", f"{quality['total_volume']}")
-        qcols[5].metric("Total OI", f"{quality['total_open_interest']}")
-        qcols[6].metric("Quote Timestamp", fetch_timestamp)
-        bcols = st.columns(2)
-        bcols[0].metric("Monotonicity Breaches", f"{quality['monotonicity_breaches']}")
-        bcols[1].metric("Convexity Breaches", f"{quality['convexity_breaches']}")
+        qcols2 = st.columns(4)
+        qcols2[0].metric("Total Volume", f"{quality['total_volume']:,d}")
+        qcols2[1].metric("Total OI", f"{quality['total_open_interest']:,d}")
+        qcols2[2].metric("Monotonicity Breaches", f"{quality['monotonicity_breaches']:,d}")
+        qcols2[3].metric("Convexity Breaches", f"{quality['convexity_breaches']:,d}")
 
     st.markdown("")
     st.markdown("---")
@@ -440,7 +500,7 @@ def render_market_vanilla_options() -> None:
     with tabs[0]:
         st.subheader("Volatility")
         if clean_chain.empty:
-            st.warning("No clean option data available after filtering.")
+            st.warning("No clean option data available after filtering. Try another expiry.")
         else:
             smile = clean_chain.copy()
             low_q, high_q = smile["iv_pct"].quantile([0.05, 0.95]).tolist()
@@ -529,7 +589,41 @@ def render_market_vanilla_options() -> None:
             '<div class="market-section-subtitle">Filtered strikes used by analytics and risk charts</div>',
             unsafe_allow_html=True,
         )
-        st.dataframe(clean_chain, use_container_width=True, hide_index=True)
+        if clean_chain.empty:
+            st.info("No rows after filters on this expiry. Displaying the first available raw rows for visibility.")
+            raw_preview = raw_chain.sort_values("strike").head(40).copy()
+            if "impliedVolatility" in raw_preview.columns:
+                raw_preview["impliedVolatility"] = raw_preview["impliedVolatility"] * 100.0
+            st.dataframe(raw_preview, use_container_width=True, hide_index=True)
+        else:
+            display_cols = [
+                "strike",
+                "bid",
+                "ask",
+                "mid_price",
+                "spread_dollar",
+                "spread_pct",
+                "iv_pct",
+                "volume",
+                "openInterest",
+            ]
+            chain_view = clean_chain[[c for c in display_cols if c in clean_chain.columns]].copy()
+            st.dataframe(
+                chain_view,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "strike": st.column_config.NumberColumn("Strike", format="%.2f"),
+                    "bid": st.column_config.NumberColumn("Bid", format="%.2f"),
+                    "ask": st.column_config.NumberColumn("Ask", format="%.2f"),
+                    "mid_price": st.column_config.NumberColumn("Mid", format="%.2f"),
+                    "spread_dollar": st.column_config.NumberColumn("Spread $", format="%.3f"),
+                    "spread_pct": st.column_config.NumberColumn("Spread %", format="%.2f"),
+                    "iv_pct": st.column_config.NumberColumn("IV %", format="%.2f"),
+                    "volume": st.column_config.NumberColumn("Volume", format="%d"),
+                    "openInterest": st.column_config.NumberColumn("OI", format="%d"),
+                },
+            )
 
 
 def render_market_news() -> None:
