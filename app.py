@@ -349,7 +349,7 @@ def render_market_vanilla_options() -> None:
     )
 
     st.sidebar.header("Market Vanilla Settings")
-    data_mode = st.sidebar.selectbox("Data Mode", options=["live", "synthetic"], index=0)
+    data_mode = st.sidebar.selectbox("Data Mode", options=["live", "synthetic"], index=1)
     ticker = st.sidebar.selectbox("Company / Ticker", options=["AAPL", "MSFT", "TSLA", "NVDA", "AMZN", "GOOGL"])
     option_type = st.sidebar.selectbox("Option Type", options=["call", "put"], index=0)
     rate = st.sidebar.number_input("Risk-Free Rate (r)", min_value=0.0, value=0.045, step=0.005, format="%.4f")
