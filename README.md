@@ -9,12 +9,7 @@ Application pédagogique de pricing d'options et de produits structures, develop
 - Pricing Monte Carlo pour options europeennes
 - Strategies de volatilite (long straddle, long strangle)
 - Module de structuration (budget optionnel, decomposition et resume)
-- Module "Market Vanilla Options" avec:
-  - mode `live` (donnees de marche via Yahoo Finance)
-  - mode `synthetic` (surface implicite realiste, plus stable en demo)
-  - nettoyage robuste des chaines d'options
-  - ATM IV robuste
-  - controles de qualite (liquidite, monotonicite, convexite)
+- Module "Market Vanilla Options" (mode `synthetic` par defaut, mode `live` disponible)
 
 ## Structure du projet
 
@@ -51,15 +46,13 @@ streamlit run app.py
 pytest -q
 ```
 
-## Utilisation du module Market Vanilla Options
-
-- Le `Data Mode` est **par defaut sur `synthetic`** pour eviter les erreurs de quota Yahoo en demonstration.
-- Le mode `live` reste disponible pour recuperer des quotes de marche reelles.
-- Si Yahoo limite les requetes (`Too Many Requests`), basculer temporairement en `synthetic` puis reessayer en `live`.
-
 ## Deploiement Streamlit Cloud
 
-L'application deployee suit la branche `main` du repo GitHub:
+Lien direct de l'application en ligne:
+
+- [https://structured-options-pricer.streamlit.app](https://structured-options-pricer.streamlit.app)
+
+Code source GitHub:
 
 - [https://github.com/mariuscarre/structured-options-pricer](https://github.com/mariuscarre/structured-options-pricer)
 
