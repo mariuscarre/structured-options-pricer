@@ -6,7 +6,10 @@ from dataclasses import dataclass
 
 import feedparser
 import requests
-import yfinance as yf
+try:
+    import yfinance as yf
+except Exception:  # pragma: no cover - optional at runtime on some deployments
+    yf = None
 
 
 @dataclass
@@ -97,6 +100,8 @@ def _safe_float(value: object) -> float | None:
 
 def _fetch_index_quote(symbol: str, name: str) -> IndexQuote | None:
     """Fetch one index quote from Yahoo with resilient fallbacks."""
+    if yf is None:
+        return None
     try:
         ticker = yf.Ticker(symbol)
 
